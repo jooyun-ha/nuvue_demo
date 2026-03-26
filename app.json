@@ -9,7 +9,11 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "$(PRODUCT_NAME) uses the camera to detect foods and show live nutrient guidance."
+      },
+      "bundleIdentifier": "com.anonymous.nuvue"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +23,11 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA"
+      ],
+      "package": "com.anonymous.nuvue"
     },
     "web": {
       "output": "static",
@@ -27,6 +35,12 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "$(PRODUCT_NAME) uses the camera to detect foods and show live nutrient guidance."
+        }
+      ],
       [
         "expo-splash-screen",
         {

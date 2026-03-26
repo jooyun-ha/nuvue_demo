@@ -1,14 +1,57 @@
+import Constants from 'expo-constants';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import {
+  compareFoodOptions,
+  NUTRITION_FOCUS_OPTIONS,
+  NutritionFocus,
+} from '@/lib/comparison/scoring';
+import { getMockRealtimeDetections } from '@/lib/detection/mockRealtimeDetections';
+import { formatCarbohydrates } from '@/lib/nutrition/carbohydrate';
+import { FoodDetection } from '@/types/detection';
+import { useEffect, useState } from 'react';
 import { StatusBar } from 'expo-status-bar';
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 export default function HomeScreen() {
+  const isExpoGo = Constants.executionEnvironment === 'storeClient';
   const [permission, requestPermission] = useCameraPermissions();
   const [isScanning, setIsScanning] = useState(false);
   const [permissionDenied, setPermissionDenied] = useState(false);
+  const [detectionStep, setDetectionStep] = useState(0);
+  const [detections, setDetections] = useState<FoodDetection[]>([]);
+  const [selectedFocus, setSelectedFocus] = useState<NutritionFocus>('balanced');
+  const [selectedDetectionId, setSelectedDetectionId] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!isScanning || Platform.OS === 'web') {
+      setDetections([]);
+      setDetectionStep(0);
+      setSelectedDetectionId(null);
+      return;
+    }
+
+    if (selectedDetectionId) {
+      return;
+    }
+
+    // Simulate a realtime detector feed using the same object shape the future model will produce.
+    setDetections(getMockRealtimeDetections(detectionStep, Date.now()));
+
+    const interval = setInterval(() => {
+      setDetectionStep((current) => {
+        const nextStep = current + 1;
+        setDetections(getMockRealtimeDetections(nextStep, Date.now()));
+        return nextStep;
+      });
+    }, 1600);
+
+    return () => clearInterval(interval);
+  }, [detectionStep, isScanning, selectedDetectionId]);
+
+  const comparedDetections = compareFoodOptions(detections, selectedFocus);
+  const selectedDetection =
+    comparedDetections.find((detection) => detection.id === selectedDetectionId) ?? null;
   const startScanning = async () => {
     setPermissionDenied(false);
 
@@ -19,21 +62,124 @@ export default function HomeScreen() {
         return;
       }
     }
+
     setIsScanning(true);
   };
 
   if (isScanning) {
+    const isWeb = Platform.OS === 'web';
+
     return (
       <SafeAreaView style={styles.cameraSafeArea}>
         <StatusBar style="light" />
-        <CameraView style={styles.cameraView} facing="back">
+        <View style={styles.cameraView}>
+          {!isWeb && !isExpoGo ? (
+            <NativeVisionCameraPreview isActive={isScanning} />
+          ) : !isWeb ? (
+            <CameraView style={StyleSheet.absoluteFill} facing="back" />
+          ) : (
+            <View style={styles.cameraFallback}>
+              <Text style={styles.cameraFallbackTitle}>
+                {isWeb ? 'Live camera is native-only' : 'Using Expo Go fallback'}
+              </Text>
+              <Text style={styles.cameraFallbackText}>
+                {isWeb
+                  ? 'VisionCamera does not support web preview. Test this scan screen on iOS or Android with a custom dev build.'
+                  : 'Expo Go cannot load react-native-vision-camera. Use a custom dev build for the real native camera path.'}
+              </Text>
+            </View>
+          )}
+
           <View style={styles.cameraHeader}>
             <Text style={styles.cameraTitle}>Scanning View</Text>
             <Pressable onPress={() => setIsScanning(false)} style={styles.closeButton}>
               <Text style={styles.closeButtonText}>Close</Text>
             </Pressable>
           </View>
-        </CameraView>
+
+          <View style={styles.overlayLayer}>
+            <View style={styles.scanGuidance}>
+              <Text style={styles.scanGuidanceTitle}>Comparison Guidance</Text>
+              <Text style={styles.scanGuidanceBody}>
+                Compare detected foods and highlight the best option for the selected nutrition goal.
+              </Text>
+            </View>
+
+            {comparedDetections.map((detection) => (
+              <Pressable
+                key={detection.id}
+                onPress={() =>
+                  setSelectedDetectionId((current) =>
+                    current === detection.id ? null : detection.id
+                  )
+                }
+                style={[
+                  styles.detectionBox,
+                  detection.isBest ? styles.bestDetectionBox : styles.otherDetectionBox,
+                  selectedDetectionId === detection.id && styles.selectedDetectionBox,
+                  {
+                    top: `${detection.box.y * 100}%`,
+                    left: `${detection.box.x * 100}%`,
+                    width: `${detection.box.width * 100}%`,
+                    height: `${detection.box.height * 100}%`,
+                  },
+                ]}>
+                <View style={detection.isBest ? styles.bestDetectionChip : styles.otherDetectionChip}>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.detectionLabel}>
+                    {detection.label}
+                  </Text>
+                  <Text numberOfLines={1} ellipsizeMode="tail" style={styles.detectionMetric}>
+                    {getCompactFocusMetricLabel(detection, selectedFocus)}
+                  </Text>
+                </View>
+              </Pressable>
+            ))}
+          </View>
+
+          <View style={styles.cameraFooter}>
+            {selectedDetection ? (
+              <Pressable onPress={() => setSelectedDetectionId(null)} style={styles.statusCard}>
+                <Text style={styles.statusTitle}>{selectedDetection.label}</Text>
+                <Text style={styles.statusText}>
+                  {selectedDetection.isBest ? 'Recommended choice' : 'Alternative option'}
+                </Text>
+                <Text style={styles.statusText}>
+                  Focus: {NUTRITION_FOCUS_OPTIONS[selectedFocus].label}
+                </Text>
+                <Text style={styles.statusText}>
+                  Confidence: {Math.round(selectedDetection.confidence * 100)}%
+                </Text>
+                <Text style={styles.statusText}>{selectedDetection.reason}</Text>
+                {selectedDetection.nutrients ? (
+                  <Text style={styles.statusText}>
+                    {getFocusMetricLabel(selectedDetection, selectedFocus)}
+                  </Text>
+                ) : null}
+              </Pressable>
+            ) : null}
+
+            <View style={styles.focusSelector}>
+              {(
+                Object.entries(NUTRITION_FOCUS_OPTIONS) as Array<
+                  [NutritionFocus, (typeof NUTRITION_FOCUS_OPTIONS)[NutritionFocus]]
+                >
+              ).map(([focusKey, focusOption]) => {
+                const isSelected = focusKey === selectedFocus;
+
+                return (
+                  <Pressable
+                    key={focusKey}
+                    onPress={() => setSelectedFocus(focusKey)}
+                    style={[styles.focusButton, isSelected && styles.focusButtonSelected]}>
+                    <Text style={[styles.focusButtonText, isSelected && styles.focusButtonTextSelected]}>
+                      {focusOption.label}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          </View>
+        </View>
       </SafeAreaView>
     );
   }
@@ -104,6 +250,71 @@ export default function HomeScreen() {
   );
 }
 
+function NativeVisionCameraPreview({ isActive }: { isActive: boolean }) {
+  const { Camera, useCameraDevice } =
+    require('react-native-vision-camera') as typeof import('react-native-vision-camera');
+  const device = useCameraDevice('back');
+
+  if (!device) {
+    return (
+      <View style={styles.cameraFallback}>
+        <Text style={styles.cameraFallbackTitle}>Back camera unavailable</Text>
+        <Text style={styles.cameraFallbackText}>
+          VisionCamera could not find a back camera on this device.
+        </Text>
+      </View>
+    );
+  }
+
+  return <Camera style={StyleSheet.absoluteFill} device={device} isActive={isActive} />;
+}
+
+function getFocusMetricLabel(detection: FoodDetection, focus: NutritionFocus): string {
+  const nutrients = detection.nutrients;
+
+  if (!nutrients) {
+    return 'Nutrient lookup pending';
+  }
+
+  switch (focus) {
+    case 'protein':
+      return `${formatMetric(nutrients.proteinPer100g)}g protein / 100g`;
+    case 'lowPotassium':
+      return `${formatMetric(nutrients.potassiumMgPer100g)}mg potassium / 100g`;
+    case 'balanced':
+    case 'carbohydrate':
+    default:
+      return formatCarbohydrates(nutrients.carbsPer100g);
+  }
+}
+
+function getCompactFocusMetricLabel(detection: FoodDetection, focus: NutritionFocus): string {
+  const nutrients = detection.nutrients;
+
+  if (!nutrients) {
+    return 'Loading nutrient info';
+  }
+
+  switch (focus) {
+    case 'protein':
+      return `${formatMetric(nutrients.proteinPer100g)}g protein`;
+    case 'lowPotassium':
+      return `${formatMetric(nutrients.potassiumMgPer100g)}mg potassium`;
+    case 'balanced':
+    case 'carbohydrate':
+    default:
+      return `${formatMetric(nutrients.carbsPer100g)}g carbs`;
+  }
+}
+
+function formatMetric(value?: number): string {
+  if (value === undefined) {
+    return '-';
+  }
+
+  return Number.isInteger(value) ? `${value}` : value.toFixed(1);
+}
+
 const styles = StyleSheet.create({
   cameraSafeArea: {
     flex: 1,
@@ -111,9 +322,34 @@ const styles = StyleSheet.create({
   },
   cameraView: {
     flex: 1,
-    justifyContent: 'space-between',
+    backgroundColor: '#05070B',
+  },
+  cameraFallback: {
+    ...StyleSheet.absoluteFillObject,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 28,
+    backgroundColor: '#0A0D14',
+  },
+  cameraFallbackTitle: {
+    color: '#FFFFFF',
+    fontSize: 22,
+    lineHeight: 28,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  cameraFallbackText: {
+    marginTop: 10,
+    color: '#A9B3C7',
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
   },
   cameraHeader: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
     margin: 16,
     marginTop: 6,
     paddingHorizontal: 12,
@@ -141,6 +377,142 @@ const styles = StyleSheet.create({
     color: '#E5EBF9',
     fontWeight: '700',
     fontSize: 13,
+  },
+  overlayLayer: {
+    ...StyleSheet.absoluteFillObject,
+  },
+  scanGuidance: {
+    position: 'absolute',
+    top: 88,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(5, 7, 11, 0.72)',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(126, 146, 184, 0.35)',
+    padding: 14,
+    gap: 4,
+  },
+  scanGuidanceTitle: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  scanGuidanceBody: {
+    color: '#C0CBE1',
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  detectionBox: {
+    position: 'absolute',
+    borderWidth: 3,
+    borderRadius: 20,
+  },
+  bestDetectionBox: {
+    borderColor: '#FF6B6B',
+    backgroundColor: 'rgba(255, 107, 107, 0.12)',
+  },
+  selectedDetectionBox: {
+    borderWidth: 4,
+  },
+  otherDetectionBox: {
+    borderColor: '#F8FAFF',
+    backgroundColor: 'rgba(248, 250, 255, 0.08)',
+  },
+  bestDetectionChip: {
+    position: 'absolute',
+    top: -3,
+    left: -3,
+    maxWidth: 180,
+    borderTopLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRightWidth: 2,
+    borderBottomWidth: 2,
+    borderColor: '#FF6B6B',
+    backgroundColor: 'rgba(255, 107, 107, 0.28)',
+  },
+  otherDetectionChip: {
+    position: 'absolute',
+    top: -3,
+    left: -3,
+    maxWidth: 180,
+    borderTopLeftRadius: 18,
+    borderBottomRightRadius: 18,
+    paddingHorizontal: 10,
+    paddingVertical: 7,
+    borderRightWidth: 2,
+    borderBottomWidth: 2,
+    borderColor: '#F8FAFF',
+    backgroundColor: 'rgba(248, 250, 255, 0.2)',
+  },
+  detectionLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  detectionMetric: {
+    color: '#EEF3FF',
+    fontSize: 10,
+    lineHeight: 14,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  cameraFooter: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 44,
+    gap: 12,
+  },
+  focusSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  focusButton: {
+    minWidth: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: 'rgba(5, 7, 11, 0.72)',
+    borderWidth: 1,
+    borderColor: 'rgba(126, 146, 184, 0.25)',
+    paddingVertical: 12,
+    paddingHorizontal: 12,
+  },
+  focusButtonSelected: {
+    borderColor: '#49C6E5',
+    backgroundColor: 'rgba(73, 198, 229, 0.24)',
+  },
+  focusButtonText: {
+    color: '#E6EDFA',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  focusButtonTextSelected: {
+    color: '#EAFBFF',
+  },
+  statusCard: {
+    backgroundColor: 'rgba(5, 7, 11, 0.82)',
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(126, 146, 184, 0.25)',
+    padding: 14,
+    gap: 3,
+  },
+  statusTitle: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '800',
+    marginBottom: 3,
+  },
+  statusText: {
+    color: '#C2CCE1',
+    fontSize: 13,
+    lineHeight: 18,
   },
   safeArea: {
     flex: 1,
