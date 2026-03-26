@@ -1,11 +1,13 @@
 import Constants from 'expo-constants';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { router } from 'expo-router';
 import {
   compareFoodOptions,
   NUTRITION_FOCUS_OPTIONS,
   NutritionFocus,
 } from '@/lib/comparison/scoring';
 import { getMockRealtimeDetections } from '@/lib/detection/mockRealtimeDetections';
+import { saveFoodDecision } from '@/lib/history/storage';
 import { formatCarbohydrates } from '@/lib/nutrition/carbohydrate';
 import { FoodDetection } from '@/types/detection';
 import { useEffect, useState } from 'react';
@@ -22,12 +24,14 @@ export default function HomeScreen() {
   const [detections, setDetections] = useState<FoodDetection[]>([]);
   const [selectedFocus, setSelectedFocus] = useState<NutritionFocus>('balanced');
   const [selectedDetectionId, setSelectedDetectionId] = useState<string | null>(null);
+  const [saveConfirmation, setSaveConfirmation] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isScanning || Platform.OS === 'web') {
       setDetections([]);
       setDetectionStep(0);
       setSelectedDetectionId(null);
+      setSaveConfirmation(null);
       return;
     }
 
@@ -52,6 +56,7 @@ export default function HomeScreen() {
   const comparedDetections = compareFoodOptions(detections, selectedFocus);
   const selectedDetection =
     comparedDetections.find((detection) => detection.id === selectedDetectionId) ?? null;
+
   const startScanning = async () => {
     setPermissionDenied(false);
 
@@ -64,6 +69,25 @@ export default function HomeScreen() {
     }
 
     setIsScanning(true);
+  };
+
+  const handleChooseThis = async () => {
+    if (!selectedDetection) {
+      return;
+    }
+
+    await saveFoodDecision({
+      selectedFocus,
+      chosenOption: selectedDetection,
+      comparedOptions: comparedDetections,
+    });
+
+    setSaveConfirmation('Saved to My History');
+    setSelectedDetectionId(null);
+
+    setTimeout(() => {
+      setSaveConfirmation(null);
+    }, 2200);
   };
 
   if (isScanning) {
@@ -155,6 +179,9 @@ export default function HomeScreen() {
                     {getFocusMetricLabel(selectedDetection, selectedFocus)}
                   </Text>
                 ) : null}
+                <Pressable onPress={handleChooseThis} style={styles.chooseButton}>
+                  <Text style={styles.chooseButtonText}>Choose this</Text>
+                </Pressable>
               </Pressable>
             ) : null}
 
@@ -179,6 +206,14 @@ export default function HomeScreen() {
               })}
             </View>
           </View>
+
+          {saveConfirmation ? (
+            <View style={styles.toastWrap}>
+              <Pressable onPress={() => router.push('/(tabs)/explore')} style={styles.toast}>
+                <Text style={styles.toastText}>{saveConfirmation}</Text>
+              </Pressable>
+            </View>
+          ) : null}
         </View>
       </SafeAreaView>
     );
@@ -513,6 +548,39 @@ const styles = StyleSheet.create({
     color: '#C2CCE1',
     fontSize: 13,
     lineHeight: 18,
+  },
+  chooseButton: {
+    marginTop: 10,
+    alignSelf: 'flex-start',
+    backgroundColor: '#49C6E5',
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  chooseButtonText: {
+    color: '#03131A',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  toastWrap: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: 84,
+    alignItems: 'center',
+  },
+  toast: {
+    backgroundColor: 'rgba(10, 19, 28, 0.92)',
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: 'rgba(73, 198, 229, 0.55)',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  toastText: {
+    color: '#EAFBFF',
+    fontSize: 12,
+    fontWeight: '700',
   },
   safeArea: {
     flex: 1,
