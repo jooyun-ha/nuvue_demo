@@ -56,6 +56,9 @@ export default function HistoryEntryScreen() {
                 Saved {formatDateTime(entry.createdAt)} · Focus {NUTRITION_FOCUS_OPTIONS[entry.selectedFocus].label}
               </Text>
               <Text style={styles.reason}>{entry.reason}</Text>
+              <View style={styles.sourceBadge}>
+                <Text style={styles.sourceBadgeText}>Food database source: FatSecret</Text>
+              </View>
             </View>
 
             <View style={styles.section}>
@@ -217,6 +220,21 @@ const styles = StyleSheet.create({
     color: '#D7DEEE',
     fontSize: 14,
     lineHeight: 21,
+  },
+  sourceBadge: {
+    alignSelf: 'flex-start',
+    marginTop: 4,
+    borderRadius: 999,
+    backgroundColor: 'rgba(248, 250, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(248, 250, 255, 0.14)',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  sourceBadgeText: {
+    color: '#D5DEEF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   section: {
     gap: 10,
