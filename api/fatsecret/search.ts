@@ -101,7 +101,7 @@ async function getFatSecretAccessToken(clientId: string, clientSecret: string): 
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
-    scope: 'basic',
+    scope: 'premier',
   });
 
   const response = await fetch(FATSECRET_TOKEN_URL, {
@@ -113,11 +113,14 @@ async function getFatSecretAccessToken(clientId: string, clientSecret: string): 
     body,
   });
 
+  const payload = (await response.json()) as { access_token?: string; error?: unknown };
+
   if (!response.ok) {
-    throw new Error(`FatSecret token request failed with ${response.status}`);
+    throw new Error(
+      `FatSecret token request failed with ${response.status}: ${extractFatSecretErrorMessage(payload)}`
+    );
   }
 
-  const payload = (await response.json()) as { access_token?: string };
   if (!payload.access_token) {
     throw new Error('FatSecret token response did not include an access_token');
   }
@@ -138,11 +141,14 @@ async function searchFoods(query: string, accessToken: string) {
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`FatSecret foods.search failed with ${response.status}`);
+  const payload = await response.json();
+
+  if (!response.ok || payload?.error) {
+    throw new Error(
+      `FatSecret foods.search failed with ${response.status}: ${extractFatSecretErrorMessage(payload)}`
+    );
   }
 
-  const payload = await response.json();
   logFatSecretRequest('search_payload_shape', {
     query,
     topLevelKeys: Object.keys(payload ?? {}),
@@ -173,11 +179,15 @@ async function getFoodById(foodId: string, accessToken: string) {
     },
   });
 
-  if (!response.ok) {
-    throw new Error(`FatSecret food.get failed with ${response.status}`);
+  const payload = await response.json();
+
+  if (!response.ok || payload?.error) {
+    throw new Error(
+      `FatSecret food.get failed with ${response.status}: ${extractFatSecretErrorMessage(payload)}`
+    );
   }
 
-  return response.json();
+  return payload;
 }
 
 function getQueryValue(req: any): string {
@@ -343,4 +353,26 @@ function logFatSecretRequest(event: string, metadata: Record<string, unknown>) {
     timestamp: new Date().toISOString(),
     ...metadata,
   }));
+}
+
+function extractFatSecretErrorMessage(payload: any): string {
+  const error = payload?.error;
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (typeof error?.message === 'string') {
+    return error.message;
+  }
+
+  if (typeof error?.description === 'string') {
+    return error.description;
+  }
+
+  if (typeof error?.code === 'string' || typeof error?.code === 'number') {
+    return `error code ${error.code}`;
+  }
+
+  return 'Unknown FatSecret error';
 }
