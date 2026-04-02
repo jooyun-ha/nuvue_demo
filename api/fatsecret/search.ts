@@ -49,11 +49,13 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
+    logFatSecretRequest('lookup_started', { query });
     const accessToken = await getFatSecretAccessToken(clientId, clientSecret);
     const searchPayload = await searchFoods(query, accessToken);
     const searchItems = normalizeSearchItems(searchPayload);
 
     if (searchItems.length === 0) {
+      logFatSecretRequest('lookup_empty', { query });
       return res.status(404).json({
         query,
         error: 'No matching foods found',
@@ -76,10 +78,19 @@ export default async function handler(req: any, res: any) {
       searchItem: bestMatch,
       foodPayload,
     });
+    logFatSecretRequest('lookup_succeeded', {
+      query,
+      foodId,
+      matchedName: normalized.matchedName,
+    });
 
     return res.status(200).json(normalized);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown FatSecret error';
+    logFatSecretRequest('lookup_failed', {
+      query,
+      error: message,
+    });
     return res.status(500).json({
       error: message,
     });
@@ -131,7 +142,24 @@ async function searchFoods(query: string, accessToken: string) {
     throw new Error(`FatSecret foods.search failed with ${response.status}`);
   }
 
-  return response.json();
+  const payload = await response.json();
+  logFatSecretRequest('search_payload_shape', {
+    query,
+    topLevelKeys: Object.keys(payload ?? {}),
+    foodsSearchKeys: Object.keys(payload?.foods_search ?? {}),
+    resultsKeys: Object.keys(payload?.foods_search?.results ?? {}),
+    foodNodeType: Array.isArray(payload?.foods_search?.results?.food)
+      ? 'array'
+      : typeof payload?.foods_search?.results?.food,
+    foodCount:
+      Array.isArray(payload?.foods_search?.results?.food)
+        ? payload.foods_search.results.food.length
+        : payload?.foods_search?.results?.food
+          ? 1
+          : 0,
+  });
+
+  return payload;
 }
 
 async function getFoodById(foodId: string, accessToken: string) {
@@ -184,6 +212,7 @@ function normalizeFoodResponse(params: {
   const food = params.foodPayload?.food ?? params.foodPayload;
   const servings = normalizeServings(food?.servings?.serving ?? food?.servings ?? []);
   const bestServing = chooseBestServing(servings);
+  const normalizedNutrients = normalizePerHundredGrams(bestServing);
 
   return {
     query: params.query,
@@ -197,20 +226,7 @@ function normalizeFoodResponse(params: {
           metricUnit: bestServing.metric_serving_unit ?? null,
         }
       : null,
-    nutrients: {
-      kcalPer100g: toNumber(bestServing?.calories),
-      carbsPer100g: toNumber(bestServing?.carbohydrate),
-      proteinPer100g: toNumber(bestServing?.protein),
-      fatPer100g: toNumber(bestServing?.fat),
-      potassiumMgPer100g: toNumber(bestServing?.potassium),
-      sodiumMgPer100g: toNumber(bestServing?.sodium),
-      vitaminBMgPer100g: firstDefinedNumber(
-        bestServing?.vitamin_b,
-        bestServing?.vitamin_b6,
-        bestServing?.vitamin_b12,
-        bestServing?.thiamin
-      ),
-    },
+    nutrients: normalizedNutrients,
     rawFoodName: food?.food_name ?? params.searchItem.food_name ?? null,
   };
 }
@@ -260,6 +276,43 @@ function buildMatchedName(item: FatSecretFoodSearchItem): string | null {
   return foodName ?? brandName ?? null;
 }
 
+function normalizePerHundredGrams(serving: FatSecretServing | null) {
+  const scale = getPerHundredGramScale(serving);
+  const scaleValue = (value: unknown) => {
+    const parsed = toNumber(value);
+    if (parsed === undefined) {
+      return undefined;
+    }
+
+    return scale ? roundToTwo(parsed * scale) : parsed;
+  };
+
+  return {
+    kcalPer100g: scaleValue(serving?.calories),
+    carbsPer100g: scaleValue(serving?.carbohydrate) ?? 0,
+    proteinPer100g: scaleValue(serving?.protein),
+    fatPer100g: scaleValue(serving?.fat),
+    potassiumMgPer100g: scaleValue(serving?.potassium),
+    sodiumMgPer100g: scaleValue(serving?.sodium),
+    vitaminBMgPer100g: scaleValue(
+      firstDefinedNumber(serving?.vitamin_b, serving?.vitamin_b6, serving?.vitamin_b12, serving?.thiamin)
+    ),
+  };
+}
+
+function getPerHundredGramScale(serving: FatSecretServing | null): number | null {
+  if (!serving || serving.metric_serving_unit !== 'g') {
+    return null;
+  }
+
+  const amount = toNumber(serving.metric_serving_amount);
+  if (!amount || amount <= 0) {
+    return null;
+  }
+
+  return 100 / amount;
+}
+
 function toNumber(value: unknown): number | undefined {
   if (value === null || value === undefined || value === '') {
     return undefined;
@@ -278,4 +331,16 @@ function firstDefinedNumber(...values: unknown[]): number | undefined {
   }
 
   return undefined;
+}
+
+function roundToTwo(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function logFatSecretRequest(event: string, metadata: Record<string, unknown>) {
+  console.info('[fatsecret]', JSON.stringify({
+    event,
+    timestamp: new Date().toISOString(),
+    ...metadata,
+  }));
 }
