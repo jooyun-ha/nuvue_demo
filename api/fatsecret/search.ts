@@ -101,7 +101,7 @@ async function getFatSecretAccessToken(clientId: string, clientSecret: string): 
   const auth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
-    scope: 'premier',
+    scope: 'basic',
   });
 
   const response = await fetch(FATSECRET_TOKEN_URL, {
